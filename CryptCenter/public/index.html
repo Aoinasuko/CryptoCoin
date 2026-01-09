@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>青井ナスコインを受け取る</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/ethers/6.7.0/ethers.umd.min.js"></script>
+    <style>
+        body { font-family: sans-serif; text-align: center; padding: 20px; background: #f4f4f4; }
+        .card { background: white; max-width: 400px; margin: 20px auto; padding: 30px; border-radius: 12px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); }
+        h2 { color: #333; }
+        button { background: #6200ea; color: white; border: none; padding: 15px 30px; font-size: 16px; border-radius: 30px; cursor: pointer; width: 100%; margin-top: 20px; font-weight: bold; }
+        button:disabled { background: #ccc; cursor: not-allowed; }
+        #status { margin-top: 15px; font-size: 14px; }
+        .success { color: green; }
+        .error { color: red; }
+    </style>
+</head>
+<body>
+
+<div class="card">
+    <h2>青井ナスコイン ギフト</h2>
+    <p>青井ナスコからのプレゼントです。<br>以下のボタンを押すと受け取れます。</p>
+    <p style="font-size:12px; color:#666;">※ガス代(手数料)はサーバーが負担します</p>
+
+    <div id="walletInfo" style="display:none; margin: 10px 0; padding:10px; background:#eee; border-radius:5px;">
+        接続中: <span id="addrDisplay"></span>
+    </div>
+
+    <button id="connectBtn" onclick="connectWallet()">ウォレットを接続</button>
+    <button id="claimBtn" onclick="claimToken()" style="display:none; background:#00c853;">プレゼントを受け取る</button>
+    
+    <p id="status"></p>
+</div>
+
+<script>
+    let userAddress = null;
+    let giftCode = null;
+
+    // ページ読み込み時にURLからコードを取得
+    window.onload = function() {
+        const params = new URLSearchParams(window.location.search);
+        giftCode = params.get("code");
+        
+        if (!giftCode) {
+            document.body.innerHTML = "<h2 style='text-align:center; margin-top:50px;'>無効なアクセスです。<br>正しいQRコードからアクセスしてください。</h2>";
+        }
+    };
+
+    async function connectWallet() {
+        if (!window.ethereum) return alert("MetaMask等のウォレットアプリで開いてください");
+        try {
+            const provider = new ethers.BrowserProvider(window.ethereum);
+            const signer = await provider.getSigner();
+            userAddress = await signer.getAddress();
+
+            document.getElementById("addrDisplay").innerText = userAddress.substring(0, 6) + "..." + userAddress.slice(-4);
+            document.getElementById("walletInfo").style.display = "block";
+            document.getElementById("connectBtn").style.display = "none";
+            document.getElementById("claimBtn").style.display = "block";
+        } catch (e) {
+            console.error(e);
+            alert("接続エラー");
+        }
+    }
+
+    async function claimToken() {
+        if (!userAddress || !giftCode) return;
+
+        const btn = document.getElementById("claimBtn");
+        const status = document.getElementById("status");
+
+        btn.disabled = true;
+        btn.innerText = "発行処理中...";
+        status.innerText = "サーバーと通信中...";
+        status.className = "";
+
+        try {
+            // code も一緒に送信する
+            const response = await fetch('/CryptCenter/api/claim', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    address: userAddress,
+                    code: giftCode
+                })
+            });
+
+            const data = await response.json();
+
+            if (data.success) {
+                status.innerText = "受け取り成功！ウォレットを確認してください。";
+                status.className = "success";
+                btn.innerText = "受け取り済み";
+                // 二度押し防止のためボタンを消す
+                btn.style.display = "none";
+            } else {
+                // エラーメッセージを表示（「使用済みです」など）
+                throw new Error(data.error || "不明なエラー");
+            }
+        } catch (e) {
+            console.error(e);
+            status.innerText = "エラー: " + e.message;
+            status.className = "error";
+            // 使用済みの場合はボタンを復活させない
+            if(!e.message.includes("使用済み")) {
+                btn.disabled = false;
+                btn.innerText = "もう一度試す";
+            }
+        }
+    }
+</script>
+
+</body>
+</html>

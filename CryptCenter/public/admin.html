@@ -1,0 +1,228 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <title>ナスコイン ギフトカード生成ツール</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/ethers/6.7.0/ethers.umd.min.js"></script>
+    <style>
+        body { font-family: "Helvetica Neue", Arial, sans-serif; background: #f0f0f0; padding: 20px; text-align: center; color: #333; }
+        .container { max-width: 850px; margin: 0 auto; background: white; padding: 30px; border-radius: 12px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); }
+        h1 { margin-bottom: 20px; font-size: 24px; }
+        .step { margin-bottom: 30px; border-bottom: 1px solid #eee; padding-bottom: 20px; text-align: left; }
+        .step h3 { margin-top: 0; border-left: 5px solid #6200ea; padding-left: 10px; }
+        input, button { padding: 12px; margin: 5px 0; font-size: 16px; width: 100%; box-sizing: border-box; }
+        button { background: #6200ea; color: white; border: none; cursor: pointer; border-radius: 6px; font-weight: bold; transition: background 0.3s; }
+        button:hover { background: #3700b3; }
+        
+        /* プレビューエリア */
+        #canvas-container { margin-top: 20px; text-align: center; background: #222; padding: 20px; border-radius: 8px; }
+        canvas { box-shadow: 0 4px 10px rgba(0,0,0,0.5); max-width: 100%; height: auto; }
+        .hidden { display: none; }
+        .input-group { margin-bottom: 15px; }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <h1>🍆 ナスコイン ギフトカード生成</h1>
+    <p style="font-size:14px; color:red;">※必ず http://localhost:3000/admin_tool.html で開いてください</p>
+
+    <div class="step">
+        <h3>1. コントラクト設定</h3>
+        <div class="input-group">
+            <label>コントラクトアドレス:</label>
+            <input type="text" id="contractAddress" placeholder="0x..." />
+        </div>
+        <button onclick="connectWallet()">ウォレット接続</button>
+        <p id="status" style="margin-top:5px; font-size:14px; color:#666;">未接続</p>
+    </div>
+
+    <div class="step">
+        <h3>2. トークン在庫発行 (Mint)</h3>
+        <p style="font-size:14px; color:#666;">配布用に、まず自分のアドレスにトークンを発行します。</p>
+        <button onclick="mintToken()">自分宛てに1枚発行</button>
+        <p id="mintStatus" style="font-weight:bold;"></p>
+    </div>
+
+    <div class="step">
+        <h3>3. ギフトカード画像生成</h3>
+        <div class="input-group">
+            <label>QRコードのURL (サーバーで発行したURL):</label>
+            <input type="text" id="qrUrl" placeholder="例: http://.../index.html?code=abc..." />
+        </div>
+        <div class="input-group">
+            <label>カードに記載するID:</label>
+            <input type="text" id="cardId" placeholder="例: #001" />
+        </div>
+        <button onclick="generateCard()">カード画像を生成</button>
+    </div>
+
+    <div id="canvas-container" class="hidden">
+        <h3 style="color:white; margin-top:0;">完成プレビュー</h3>
+        <canvas id="cardCanvas" width="650" height="400"></canvas>
+        <br><br>
+        <button onclick="downloadCard()" style="background:#00c853;">画像をダウンロード (PNG)</button>
+    </div>
+    
+    <div id="qrcode" style="display:none;"></div>
+</div>
+
+<script>
+    let provider, signer, contract;
+    const abi = ["function safeMint(address to) public"];
+
+    // 1. ウォレット接続（修正版）
+    async function connectWallet() {
+        // window.ethereumが存在するかチェック
+        if (typeof window.ethereum === 'undefined') {
+            return alert("MetaMaskが見つかりません。PCにインストールされているか確認してください。");
+        }
+
+        try {
+            // Ethersプロバイダーの初期化
+            provider = new ethers.BrowserProvider(window.ethereum);
+            
+            // アカウントへのアクセス要求
+            await provider.send("eth_requestAccounts", []);
+            
+            signer = await provider.getSigner();
+            const address = await signer.getAddress();
+            
+            document.getElementById("status").innerText = "接続中: " + address;
+            document.getElementById("status").style.color = "green";
+        } catch (e) {
+            console.error(e);
+            alert("接続エラー: " + (e.reason || e.message));
+        }
+    }
+
+    // 2. Mint実行
+    async function mintToken() {
+        const addressInput = document.getElementById("contractAddress").value;
+        if (!signer) return alert("先にウォレットを接続してください");
+        
+        try {
+            document.getElementById("mintStatus").innerText = "処理中...";
+            contract = new ethers.Contract(addressInput, abi, signer);
+            const myAddress = await signer.getAddress();
+            const tx = await contract.safeMint(myAddress);
+            await tx.wait();
+            document.getElementById("mintStatus").innerText = "発行成功！";
+            document.getElementById("mintStatus").style.color = "green";
+            alert("発行完了！");
+        } catch (e) {
+            console.error(e);
+            alert("発行エラー: " + e.message);
+        }
+    }
+
+    // 3. 画像生成ロジック（画像読み込み対応版）
+    function generateCard() {
+        const url = document.getElementById("qrUrl").value;
+        const idText = document.getElementById("cardId").value || "SAMPLE";
+        
+        if(!url) return alert("URLを入力してください");
+
+        // QR生成
+        const qrContainer = document.getElementById("qrcode");
+        qrContainer.innerHTML = "";
+        new QRCode(qrContainer, {
+            text: url,
+            width: 150,
+            height: 150,
+            correctLevel: QRCode.CorrectLevel.M // QRの密度（M=標準）
+        });
+
+        // 画像の読み込み処理
+        const bgImg = new Image();
+        bgImg.src = "./background.png"; // 同じフォルダの画像を指定
+        
+        // 画像読み込み完了後に描画開始
+        bgImg.onload = () => {
+            drawCanvas(bgImg, qrContainer, idText);
+        };
+
+        bgImg.onerror = () => {
+            alert("エラー: 'background.png' が見つかりません。同じフォルダに置いてください。");
+            // 画像がない場合は黒背景で描画を続行
+            drawCanvas(null, qrContainer, idText);
+        };
+    }
+
+    // 描画の本体
+    function drawCanvas(img, qrContainer, idText) {
+        const canvas = document.getElementById("cardCanvas");
+        const ctx = canvas.getContext("2d");
+        const qrImg = qrContainer.querySelector("img");
+
+        if(!qrImg.src) return alert("QR生成待機中...もう一度押してください");
+
+        // 1. 背景描画
+        if (img) {
+            ctx.drawImage(img, 0, 0, 650, 400);
+        } else {
+            ctx.fillStyle = "#1a1a1a";
+            ctx.fillRect(0, 0, 650, 400);
+        }
+
+        // 2. 文字の見やすさを確保するための半透明レイヤー（お好みで調整）
+        // 左側のテキストエリアだけ少し暗くする
+        ctx.fillStyle = "rgba(0, 0, 0, 0.6)"; 
+        ctx.fillRect(20, 20, 350, 60); 
+        // 右側のQRエリアの下地（白）
+        ctx.fillStyle = "rgba(255, 255, 255, 0.9)";
+        ctx.fillRect(285, 100, 130, 130);
+
+        // 3. テキスト描画
+        ctx.fillStyle = "white";
+        ctx.textAlign = "left";
+        ctx.textBaseline = "top";
+
+        // 説明文
+        ctx.font = "10px sans-serif";
+        ctx.fillStyle = "#e0e0e0";
+        const lineHeight = 16;
+        let startY = 30;
+
+        ctx.fillText("これはMetaMask等で暗号記念通貨(トークン)を獲得できるQRコードです。", 30, startY);
+        ctx.fillText("金銭的価値は無く、換金や他のトークンとの交換はできません。", 30, startY + lineHeight);
+
+        // 注意書き
+        ctx.fillStyle = "#ffaaaa"; 
+        ctx.font = "bold 10px sans-serif";
+        ctx.fillText("※トークンは別アカウントに動かせないので注意してください。", 30, startY + (lineHeight * 2));
+
+        // 4. QRコード配置
+        ctx.drawImage(qrImg, 300, 115, 100, 100);
+
+        // 5. ID描画 (右下)
+        // 背景画像によっては文字が見えにくいので、文字に縁取りをつける
+        ctx.textAlign = "middle";
+        ctx.font = "bold 18px sans-serif";
+        
+        // 縁取り
+        ctx.strokeStyle = "black";
+        ctx.lineWidth = 4;
+        ctx.strokeText(idText, 520, 360);
+        
+        // 本体
+        ctx.fillStyle = "white"; // ゴールド
+        ctx.fillText(idText, 520, 360);
+
+        // 表示
+        document.getElementById("canvas-container").classList.remove("hidden");
+    }
+
+    function downloadCard() {
+        const canvas = document.getElementById("cardCanvas");
+        const link = document.createElement("a");
+        const id = document.getElementById("cardId").value || "card";
+        link.download = `nasu_gift_${id}.png`;
+        link.href = canvas.toDataURL("image/png");
+        link.click();
+    }
+</script>
+
+</body>
+</html>
